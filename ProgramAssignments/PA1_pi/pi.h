@@ -36,7 +36,7 @@ double pi_calc(long int n) {
         float x = vectors[2 * i];
         float y = vectors[2 * i + 1];
         float r = x*x +y*y;
-        distance[i] = r
+        distance[i] = r;
     }
 
     // Wait until all processors finished, add all processor list to processor rank 0
