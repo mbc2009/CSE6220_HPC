@@ -25,7 +25,7 @@ double pi_calc(long int n) {
     // Generate random points in the unit square [0,1] x [0,1]
     int dimension = 2;             // x, y coordinates per point
     int total = dimension * points; 
-    std::vector<float> vectors(total); // Use vector for automatic memory management
+    std::vector<float> vectors(total); // automatic memory management
     std::mt19937 rng(time(0) + rank * 100); // Seed random number generator uniquely for each rank
     std::uniform_real_distribution<float> dist(0.0, 1.0); // Generate normalized random values
     for (int i = 0; i < total; i++) {
