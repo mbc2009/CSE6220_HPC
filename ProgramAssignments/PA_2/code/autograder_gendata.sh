@@ -1,27 +1,18 @@
 #!/bin/bash
 
-echo "=================== GENERATING TEST FILE ==================="
-echo " "
+echo -e "=================== GENERATING TEST FILE ==================="
 mkdir -p autograderdata
 
-if [ ! -f "inputard_15.txt" ]; then
-    python3 ard_gen.py 15
-fi
-echo " "
+for i in 36; do
+    if [ ! -f "autograderdata/inputard_${i}.txt" ]; then
+        python3 ard_gen.py $i
+    fi
+    echo " "
 
-if [ ! -f "inputm2_15.txt" ]; then
-    python3 m2m_gen.py 15
-fi
-echo " "
+    if [ ! -f "autograderdata/inputm2_${i}.txt" ]; then
+        python3 m2m_gen.py $i
+    fi
+    echo " "
+done
 
-if [ ! -f "inputard_24.txt" ]; then
-    python3 ard_gen.py 24
-fi
-echo " "
-
-if [ ! -f "inputm2_24.txt" ]; then
-    python3 m2m_gen.py 24
-fi
-
-echo " "
-exit 1
+exit 1 # Stop here for now
