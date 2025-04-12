@@ -1,7 +1,22 @@
 \documentclass[11pt]{article}
-% import package
-\usepackage{booktabs} % table marks
-\usepackage{verbatim} % long comment
+\usepackage{tikz} 
+\usepackage{times}
+\usepackage{palatino}
+\usepackage{forest}
+\usepackage[colorlinks=true, linkcolor=cyan, urlcolor=cyan, citecolor=cyan]{hyperref} % 超链接
+\usepackage{pgfplots} % 绘图
+\pgfplotsset{compat=newest} % 绘图兼容模式
+\usepackage{enumitem}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{palatino}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{comment}
+\usepackage{graphicx} 
+\setlength{\parindent}{0pt}
 
 % template styling
 \oddsidemargin=-0.005in
@@ -34,7 +49,110 @@ Programming Assignment-3 Report \\Submitted \today}
 {\bf Name:} Honglin Liu \hfill{{\bf gID:} 903651409}\\
 {\bf Name:} Xuzheng Tian \hfill{{\bf gID:} 903618682}\\
 
+
 %%% Main text %%%
+\newpage
+\section{Implementation of the 2D SUMMA SpGeMM Algorithm}
+
+Our implementation of the Sparse General Matrix-Matrix Multiplication (SpGeMM) algorithm computes $C = A \times B$ for sparse matrices $A$ ($m \times p$) and $B$ ($p \times n$) in COO format, using a 2D $\sqrt{p} \times \sqrt{p}$ processor grid. 
+
+We adopt the Sparse \href{https://www.netlib.org/lapack/lawnspdf/lawn96.pdf}{SUMMA} (Scalable Universal Matrix Multiplication) algorithm, optimized for non-zero elements, with key functions implemented in \texttt{spgemm.cpp}.
+
+\subsection{Algorithm implementation}
+The algorithm proceeds as follows:
+\begin{enumerate}
+    \item \textbf{Initialization}:\\
+    	The \texttt{spgemm\_2d} function determines the local block dimensions for each processor.\\
+    	 For a processor at grid position (\texttt{row\_rank}, \texttt{col\_rank}), we compute block sizes as \texttt{block\_size\_m = (m+size-1)/size}, \texttt{block\_size\_n}, and \texttt{block\_size\_p}, where \texttt{size} is the grid dimension ($\sqrt{p}$).\\
+    	Actual block sizes (\texttt{current\_size\_m}, \texttt{current\_size\_n}, \texttt{current\_size\_p}) adjust for boundary conditions.
+    
+    \item \textbf{COO to CSR Conversion}:\\
+    	To optimize non-zero element access, \texttt{COO2CSR} converts input matrices $A$ and $B$ from COO to CSR format.\\
+    	For a matrix with \texttt{lenth} non-zeros, \texttt{COO2CSR} allocates \texttt{row\_ptr} (size \texttt{m+1}), \texttt{idx}, and \texttt{values} (size \texttt{lenth}).\\
+    	It counts non-zeros per row and computes a prefix sum for \texttt{row\_ptr}, enabling efficient row-wise traversal.
+
+    \item \textbf{SUMMA Computation}:\\
+    	The \texttt{SUMMA} function executes the core multiplication.\\
+    	For each iteration $k$ (0 to \texttt{col\_size}):
+    \begin{itemize}[topsep=0pt, itemsep=0pt]
+        \item \textbf{Broadcast $A$}:\\ 
+        		The $k$-th column block of $A$ (CSR format) is broadcast within the row communicator (\texttt{row\_comm}) using \texttt{MPI\_Bcast}.\\
+        		The block includes \texttt{row\_ptr}, \texttt{idx}, and \texttt{values}, with size determined by non-zero count (\texttt{nnz\_A}).
+        \item \textbf{Broadcast $B$}:\\
+       		The $k$-th row block of $B$ is broadcast within the column communicator (\texttt{col\_comm}).
+        \item \textbf{Local Computation}:\\
+        		Each processor computes a contribution to $C$’s local block (\texttt{C\_block}, size \texttt{block\_size\_m} $\times$ \texttt{block\_size\_n}).\\
+        		For each non-zero $A[i, A\_col]$ and $B[A\_col, B\_col]$, we update \texttt{C\_block[i, B\_col] = plus(C\_block[i, B\_col], times(A[i, A\_col], B[A\_col, B\_col]))}, where \texttt{plus} and \texttt{times} define the semiring.
+    \end{itemize}
+    \texttt{C\_block} is initialized to zero in \texttt{spgemm\_2d} for standard operations.
+
+    \item \textbf{Output Conversion}:\\
+    	The \texttt{MTX2COO} function converts \texttt{C\_block} to COO format. Non-zero elements are extracted, and global coordinates are restored by adding offsets (\texttt{row\_rank * block\_size\_m}, \texttt{col\_rank * block\_size\_n}) to the local coordinates. The result is stored in $C$.
+\end{enumerate}
+
+
+\subsection{Variations for APSP}
+For APSP, a variant of \texttt{spgemm\_2d} described above, \textit{i.e.}, \texttt{spgemm\_2d\_apsp}.
+
+Different from its original version, \texttt{spgemm\_2d\_apsp} initializes \texttt{C\_block} to 1000000 (infinity, instead of $0$) and resets unchanged entries to $0$ before conversion, supporting the \texttt{min-plus} semiring employed in \texttt{APSP}.\\[1ex]
+ 
+This variation helps override the bugs in Min-plus \textit{semiring} when using the original \texttt{spgemm\_2d}, in which case the initialized value, $0$, is always being selected as the \textit{minimum value}. 
+    	
+% brief summary
+The implementation of both \S1.1 \& \S1.2 ensures correctness for arbitrary $m \times p$ and $p \times n$ matrices (in SpGeMMM) while supporting flexible semiring operations (in APSP), as tested with $A \times A^T$.
+
+
+\newpage
+\section{Implementation of the APSP Algorithm}
+
+
+The APSP (All-Pairs Shortest Path) algorithm computes shortest path distances between all vertex pairs in a weighted graph with $n$ nodes, represented in COO format.  
+
+Inspired by the \href{https://en.wikipedia.org/wiki/Floyd\%E2\%80\%93Warshall_algorithm}{\textit{Floyd-Warshall}} algorithm, our implementation in \texttt{apsp.cpp} uses matrix multiplication with a \textit{min-plus} semiring operator, executed via \texttt{spgemm\_2d}.  
+
+The graph described in the problem is modeled as an $n \times n$ distance matrix $L$, where $L[i,j]$ is the edge weight from node $i$ to $j$ (0 denotes infinity). 
+
+% semiring operation 
+\subsection{Implementation of min-plus semiring}
+The \textit{min-plus} semiring redefines operations:
+\begin{itemize}[topsep=0pt, itemsep=0pt]
+    \item \texttt{plus}:\\
+          $\min(a, b)$, selecting the shorter path.\\
+          If $a=0$ and $b=0$, returns 0; if $a=0$, returns $b$; if $b=0$, returns $a$.
+    \item \texttt{times}:\\
+          $a + b$, summing edge weights.\\
+          If $a=0$ or $b=0$, returns 0.
+\end{itemize}
+This allows $L^k[i,j]$ to represent the shortest path from $i$ to $j$ using at most $k$ intermediate nodes, akin to Floyd-Warshall’s iterative updates.
+
+% algorithm framework
+\subsection{Algorithm implementation}
+The algorithm proceeds as follows:
+\begin{enumerate}
+    \item \textbf{Initialization}:\\
+          In \texttt{apsp}, we set $L$ to the input graph and compute local block ranges for each processor (\texttt{row\_rank}, \texttt{col\_rank}) in the $\sqrt{p} \times \sqrt{p}$ grid.\\
+          The block size is \texttt{block\_size\_n = (n+row\_size-1)/row\_size}, with row range [\texttt{row\_start}, \texttt{row\_end}) and column range [\texttt{col\_start}, \texttt{col\_end}).
+
+    \item \textbf{Iterative Matrix Multiplication}:\\
+		For iterations where \texttt{max\_iter} doubles from 1 to $n$:
+    	\begin{itemize}[topsep=0pt, itemsep=0pt]
+       		\item Copy $L$ to \texttt{L\_tmp}.\\
+        		\item Call \texttt{spgemm\_2d} to compute $L = \texttt{L\_tmp} \times \texttt{L\_tmp}$ under the min-plus semiring, updating $L[i,j] = \min(L[i,j], \min_k (L[i,k] + L[k,j]))$.
+    	\end{itemize}
+
+    \item \textbf{Local Processing}:\\
+          Post-multiplication, each processor filters $L$ to retain entries within its block, mapping global coordinates $(i,j)$ to local $(\texttt{i - row\_start}, \texttt{j - col\_start})$.\\
+          A \texttt{std::map} merges \texttt{L\_tmp} and $L$, keeping the minimum value for each coordinate to ensure correctness.
+
+    \item \textbf{Synchronization}:\\
+          \texttt{MPI\_Barrier} ensures processors align after each iteration.
+
+    \item \textbf{Output}:\\
+          Global coordinates are restored by adding \texttt{row\_start} and \texttt{col\_start} offsets, yielding the result in COO format.
+\end{enumerate}
+
+This \href{https://en.wikipedia.org/wiki/Floyd\%E2\%80\%93Warshall_algorithm}{\textit{Floyd-Warshall}}-inspired approach leverages \texttt{spgemm\_2d}’s parallel efficiency to compute shortest paths.  
+The \textit{min-plus} semiring ensures correctness, while local processing reduces communication overhead.
 
 
 
@@ -42,6 +160,66 @@ Programming Assignment-3 Report \\Submitted \today}
 
 
 
+
+
+\newpage
+\section{Visualization of Algorithms' Performances}
+
+\begin{tikzpicture}
+    \begin{axis}[
+        width=0.8\textwidth,
+        height=0.5\textwidth,
+        xlabel={Number of Processors},
+        ylabel={Runtime (seconds)},
+        title={Performance of SUMMA SpGeMM},
+        mark=*,
+        grid=major 
+    ]
+    % 添加数据
+    \addplot coordinates {
+        (1,  0.5)
+        (4,  1.2)
+        (9,  2.0)
+        (16, 6.5)
+        (25, 15)
+        (36, 35)
+    };
+    % 图例
+    \addlegendentry{RunTime}
+    \end{axis}
+\end{tikzpicture}
+
+Good good good
+
+
+
+
+
+\begin{tikzpicture}
+    \begin{axis}[
+        width=0.8\textwidth,
+        height=0.5\textwidth,
+        xlabel={Number of Processors},
+        ylabel={Runtime (seconds)},
+        title={Performance of APSP},
+        mark=*,
+        grid=major 
+    ]
+    % 添加数据
+    \addplot coordinates {
+        (1,  0.5)
+        (4,  1.2)
+        (9,  2.0)
+        (16, 6.5)
+        (25, 15)
+        (36, 35)
+    };
+    % 图例
+    \addlegendentry{RunTime}
+    \end{axis}
+\end{tikzpicture}
+
+Good good good
 
 
 \end{document}
