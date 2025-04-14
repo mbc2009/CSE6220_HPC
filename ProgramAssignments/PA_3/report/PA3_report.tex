@@ -56,7 +56,7 @@ We adopt the Sparse \href{https://www.netlib.org/lapack/lawnspdf/lawn96.pdf}{SUM
 The algorithm proceeds as follows:
 \begin{enumerate}
 	\item \textbf{Initialization}:\\
-        {\color{blue}The root processor distributes input matrices $A$ and $B$ in global COO format to the $\sqrt{p} \times \sqrt{p}$ processor grid, with each processor receiving entries for its block without coordinate adjustments. }\\
+        {\color{black}The root processor distributes input matrices $A$ and $B$ in global COO format to the $\sqrt{p} \times \sqrt{p}$ processor grid, with each processor receiving entries for its block without coordinate adjustments. }\\
         The \texttt{SpGeMM\_2d} function determines the local block dimensions for each processor.\\
         A local matrix \texttt{C\_block} is created as a sparse map, with elements implicitly set to 0 (non-existent entries are treated as 0 during computation). \\
         
@@ -78,15 +78,15 @@ The algorithm proceeds as follows:
             Each processor computes a contribution to $C$’s local block (\texttt{C\_block}, a sparse map of coordinates to values).\\
             For each non-zero $A[i, A\_col]$ and $B[A\_col, B\_col]$, we update \texttt{C\_block[\{i, B\_col\}] = plus(C\_block[\{i, B\_col\}], times(A[i, A\_col], B[A\_col, B\_col]))}, where \texttt{plus} and \texttt{times} define the semiring.
     \end{itemize}
-    \texttt{C\_block} is initialized as an empty \texttt{std::map} in \texttt{SpGeMM\_2d}, storing {\color{red} all entries}.
+    \texttt{C\_block} is initialized as an empty \texttt{std::map} in \texttt{SpGeMM\_2d}, storing {\color{black} all entries}.
 
     \item \textbf{Output Conversion}:\\
         The \texttt{MTX2COO} function converts \texttt{C\_block} to COO format.\\
-        {\color{blue}It iterates over non-zero entries in the sparse map, using their global coordinates directly to form the output matrix $C$.}
+        {\color{black}It iterates over all entries in the sparse map, using their global coordinates directly to form the output matrix $C$.}
 \end{enumerate}
 
 % brief summary
-{\color{blue}For APSP, \texttt{SpGeMM\_2d} is used with the min-plus semiring, treating undeclared values in \texttt{C\_block} as infinity and setting diagonal entries to 0 to compute shortest paths correctly.}
+{\color{black}For APSP, \texttt{SpGeMM\_2d} is used with the min-plus semiring, treating undeclared values in \texttt{C\_block} as infinity and setting diagonal entries to 0 to compute shortest paths correctly.}
 
 The implementation ensures correctness for arbitrary $m \times p$ and $p \times n$ matrices while supporting flexible semiring operations, as tested with $A \times A^T$.
 
@@ -104,36 +104,30 @@ The graph described in the problem is modeled as an $n \times n$ distance matrix
 The \textit{min-plus} semiring redefines operations:
 \begin{itemize}[topsep=0pt, itemsep=0pt]
     \item \texttt{plus}:\\
-          {\color{blue}$\min(a, b)$, selecting the shorter path. If $a=0$ (infinity), returns $b$; otherwise, returns the minimum of $a$ and $b$.}
+          {\color{black}$\min(a, b)$, selecting the shorter path. If $a=0$ (infinity), returns $b$; otherwise, returns the minimum of $a$ and $b$.
+    \item We treat all zero entries (assigned in the SpGeMM algorithm) in the resultant matrix as infinity. The error will occur on the diagonal line (they are true zeros), which will be replaced later.
+          }
     \item \texttt{times}:\\
-          {\color{blue}$a + b$, summing edge weights directly, assuming valid weights (zeros as 0).}
+          {\color{black}$a + b$, summing edge weights directly, assuming valid weights (zeros as 0).}
 \end{itemize}
-{\color{blue}This allows $L^k[i,j]$ to represent the shortest path from $i$ to $j$ using at most $k$ intermediate nodes. Diagonal entries are set to 0 after each iteration to ensure correctness.}
+{\color{black}This allows $L^k[i,j]$ to represent the shortest path from $i$ to $j$ using at most $k$ intermediate nodes. Diagonal entries are set to 0 after each iteration to ensure correctness.}
 
 % algorithm framework
 \subsection{Algorithm implementation}
 The algorithm proceeds as follows:
 \begin{enumerate}
-    \item \textbf{Initialization}:\\
-          In \texttt{apsp}, we set $L$ to the input graph and compute local block ranges for each processor (\texttt{row\_rank}, \texttt{col\_rank}) in the $\sqrt{p} \times \sqrt{p}$ grid.\\
-          The block size is \texttt{block\_size\_n = (n+row\_size-1)/row\_size}, with row range [\texttt{row\_start}, \texttt{row\_end}) and column range [\texttt{col\_start}, \texttt{col\_end}).
-
     \item \textbf{Iterative Matrix Multiplication}:\\
         For iterations where \texttt{max\_iter} doubles from 1 to $n$:
         \begin{itemize}[topsep=0pt, itemsep=0pt]
             \item Copy $L$ to \texttt{L\_tmp}.
             \item Call \texttt{SpGeMM\_2d} to compute $L = \texttt{L\_tmp} \times \texttt{L\_tmp}$ under the min-plus semiring, updating $L[i,j] = \min(L[i,j], \min_k (L[i,k] + L[k,j]))$.
-            {\color{blue}\item Set diagonal entries $L[i,i]$ to 0 to correct potential errors from summation or minimization.}
         \end{itemize}
 
     \item \textbf{Local Processing}:\\
-          {\color{blue}Each processor retains $L$’s entries in global coordinates, with no additional filtering required beyond diagonal corrections performed in step 2.}
-
-    \item \textbf{Synchronization}:\\
-          \texttt{MPI\_Barrier} ensures processors align after each iteration.
+           {\color{black} Set diagonal entries $L[i,i]$ to 0 to correct potential errors from summation or minimization.}
 
     \item \textbf{Output}:\\
-          Global coordinates are restored by adding \texttt{row\_start} and \texttt{col\_start} offsets, yielding the result in COO format.
+          	L is then moved to the result. 
 \end{enumerate}
 
 This \href{https://en.wikipedia.org/wiki/Floyd\%E2\%80\%93Warshall_algorithm}{\textit{Floyd-Warshall}}-inspired approach leverages \texttt{SpGeMM\_2d}’s parallel efficiency to compute shortest paths.  
@@ -347,21 +341,27 @@ with PACE clusters, we also record the actual performances of our SpGeMM (\textt
 
 
 \subsection{Complexity and Communication}
-{\color{blue}
+Assume that all the non-zero are evenly distributed.\\
+{\color{black}
 \textbf{SpGeMM}: 
 \begin{itemize}[label={},itemsep=0pt,topsep=0pt] 
     \item \textbf{Comput. cost}:\\
-        $O((\text{nnz}(A) \cdot \text{nnz}(B))/p + \sqrt{p})$ for one matrix multiplication.  
+        $O((\text{nnz}(A) \cdot \text{nnz}(B))/\sqrt{p})$ for one matrix multiplication.  
     \item \textbf{Comm. cost}:\\
-        $\sqrt{p}$ \texttt{MPI\_Bcast} calls cost $O(\tau \cdot \sqrt{p} + \mu \cdot (\text{nnz}(A) + \text{nnz}(B))/\sqrt{p})$ per processor
+        $\sqrt{p}$ \texttt{MPI\_Bcast} calls cost $O(\tau \cdot \sqrt{p} \cdot \log{p}+ \mu \cdot (\text{nnz}(A) 
+        + \text{nnz}(B))\cdot \log{p}/\sqrt{p} 
+        )$ per processor
 \end{itemize}
 
 \textbf{APSP}:
 \begin{itemize}[label={}, itemsep=0pt,topsep=0pt]   
     \item  \textbf{Comput.cost}:\\
-        $O((\text{nnz}(G)^2 \cdot \log n)/p + \sqrt{p} \cdot \log n)$ for $\text{nnz}(G)$ edges, due to $\lceil \log n \rceil$ \texttt{SpGeMM\_2d} calls.  
+        $O((\text{nnz}(G)^2 \cdot \log n)/{\sqrt{p}} + \text{nnz}(G) \cdot \log n)$ for $\text{nnz}(G)$ edges, due to $\lceil \log n \rceil$ \texttt{SpGeMM\_2d} calls and diagonal operation.   
     \item  \textbf{Comm. cost}:\\ 
-        $\log n$ $\times$ SpGeMM’s cost $+$ \texttt{MPI\_Barrier}, totaling $O(\tau \cdot \sqrt{p} \cdot \log n + \mu \cdot \text{nnz}(G) \cdot \log n / \sqrt{p})$ per processor.
+        $\log n$ $\times$ SpGeMM’s cost $+$ \texttt{MPI\_Barrier}, totaling 
+        		$O(
+        		\tau \cdot \sqrt{p} \cdot \log n \log p 
+        		+ \mu \cdot \text{nnz}(G) \cdot \log n \log p / \sqrt{p})$ per processor.
 \end{itemize}
 }
 
@@ -372,7 +372,7 @@ $\tau$ is latency;
 $\mu$ is bandwidth.
 \\[1ex]
 
-{\color{blue}
+{\color{black}
 \textbf{Comparison}:\\
 SpGeMM is lighter (single pass) but scales similarly to APSP per iteration. 
 APSP’s $\log n$ iterations inflate computation and communication, reducing scalability for large $n$.
@@ -403,10 +403,10 @@ APSP’s $\log n$ iterations inflate computation and communication, reducing sca
         \addlegendentry{RunTime}
         \end{axis}
     \end{tikzpicture}
-    \caption{\color{blue}SpGeMM: 55.80s to 4.04s ($p=36$, speedup 13.80$\times$).}
+    \caption{\color{black}SpGeMM: 55.80s to 4.04s ($p=36$, speedup 13.80$\times$).}
 \end{figure}
 
-SpGeMM Scales from {\color{blue}55.80s ($p=1$)} to {\color{blue}4.04s ($p=36$)}, meeting $<10$s target. Speedup ({\color{blue}13.80$\times$}) slows beyond $p=16$ due to communication ($O(\alpha \cdot \sqrt{p})$). 
+SpGeMM Scales from {\color{black}55.80s ($p=1$)} to {\color{black}4.04s ($p=36$)}, meeting $<10$s target. Speedup ({\color{black}13.80$\times$}) slows beyond $p=16$ due to communication ($O(\alpha \cdot \sqrt{p})$). 
  
 \begin{figure}[H]
     \centering
@@ -431,10 +431,10 @@ SpGeMM Scales from {\color{blue}55.80s ($p=1$)} to {\color{blue}4.04s ($p=36$)},
         \addlegendentry{RunTime}
         \end{axis}
     \end{tikzpicture}
-    \caption{\color{blue}APSP: 869.63s to 11.01s ($p=36$, speedup 79.02$\times$).}
+    \caption{\color{black}APSP: 869.63s to 11.01s ($p=36$, speedup 79.02$\times$).}
 \end{figure}
 
-APSP Drops from {\color{blue}869.63s} to {\color{blue}11.01s}, exceeding $<30$s target. Higher speedup ({\color{blue}79.02$\times$}) reflects more enormous sequential workload, but $\log n$ iterations limit scalability.\\ 
+APSP Drops from {\color{black}869.63s} to {\color{black}11.01s}, exceeding $<30$s target. Higher speedup ({\color{black}79.02$\times$}) reflects more enormous sequential workload, but $\log n$ iterations limit scalability.\\ 
 
 % Comparison
 APSP’s iterative cost yields higher runtimes but better speedup. 
