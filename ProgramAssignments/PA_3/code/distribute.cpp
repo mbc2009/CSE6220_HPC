@@ -32,22 +32,23 @@ void distribute_matrix_2d(int m, int n, std::vector<std::pair<std::pair<int, int
     size=sqrt(size_2d);
 
     // Split and distribute the matrix to the processors
-    // Split by 2D and send the data to the processors immediately
+    // Split by 2D spatially and send the data to the processors immediately
     int local_m = (m+size-1) / size;
     int local_n = (n+size-1) / size;
     int length=full_matrix.size();
     if (rank == root) {
         std::map<int, std::vector<std::pair<std::pair<int, int>, int>>> buf_send;
+        // The order is perserved in this case
         for (int i = 0; i < length; i++) {
             int row = full_matrix[i].first.first;
             int col = full_matrix[i].first.second;
+            // Find the target processor
             int row_block = row / local_m;
             int col_block = col / local_n;
             int dest = row_block * size + col_block;
-            int local_row = row - row_block * local_m;
-            int local_col = col - col_block * local_n;
-            buf_send[dest].push_back(std::make_pair(std::make_pair(local_row, local_col), full_matrix[i].second));
+            buf_send[dest].push_back(std::make_pair(std::make_pair(row, col), full_matrix[i].second));
         }
+        // Send the data to target processor
         for (int i=0; i<size_2d; i++){
             int count=buf_send[i].size();
             if (i == root){
